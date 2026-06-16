@@ -8,8 +8,8 @@ import {
   StyleSheet,
   Alert,
 } from 'react-native';
-import * as SQLite from 'expo-sqlite';
 import firebase from 'firebase';
+import 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: "AIzaSyAYqYdEtArJNdHganZFluKG-d0-IWtKuX0",
@@ -24,46 +24,42 @@ if (!firebase.apps.length) {
   firebase.initializeApp(firebaseConfig);
 }
 
-async function openDatabase() {
-  return await SQLite.openDatabaseAsync('pessoas.db');
-}
+const db = firebase.firestore();
 
 export default function App() {
   const [codigo, setCodigo] = useState('');
   const [nome, setNome] = useState('');
   const [pessoas, setPessoas] = useState([]);
-  const [db, setDb] = useState(null);
 
-  // Auth states
+  
   const [usuario, setUsuario] = useState('');
   const [senha, setSenha] = useState('');
   const [logado, setLogado] = useState(false);
 
-  // Cadastro states
-  const [tela, setTela] = useState('login'); // 'login' | 'cadastro'
+ 
+  const [tela, setTela] = useState('login');
   const [emailCadastro, setEmailCadastro] = useState('');
   const [senhaCadastro, setSenhaCadastro] = useState('');
   const [confirmarSenha, setConfirmarSenha] = useState('');
 
   useEffect(() => {
-    (async () => {
-      const database = await openDatabase();
-      setDb(database);
+    if (!logado) return;
 
-      await database.execAsync(`
-        CREATE TABLE IF NOT EXISTS pessoas (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          codigo TEXT NOT NULL UNIQUE,
-          nome TEXT NOT NULL
-        );
-      `);
+    const unsubscribe = db
+      .collection('pessoas')
+      .orderBy('codigo')
+      .onSnapshot((snapshot) => {
+        const lista = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setPessoas(lista);
+      });
 
-      await carregarPessoas(database);
-    })();
-  }, []);
+    return () => unsubscribe();
+  }, [logado]);
 
-  // ─── Auth ────────────────────────────────────────────────────────────────────
-
+  
   const fazerLogin = async () => {
     if (!usuario.trim() || !senha) {
       Alert.alert('Atenção', 'Preencha e-mail e senha.');
@@ -96,17 +92,16 @@ export default function App() {
         emailCadastro.trim(),
         senhaCadastro
       );
-      Alert.alert('Sucesso', 'Conta criada! Faça login para continuar.', [
-        {
-          text: 'OK',
-          onPress: () => {
-            setEmailCadastro('');
-            setSenhaCadastro('');
-            setConfirmarSenha('');
-            setTela('login');
-          },
-        },
-      ]);
+
+    
+      await firebase.auth().signOut();
+
+      setEmailCadastro('');
+      setSenhaCadastro('');
+      setConfirmarSenha('');
+      setTela('login');
+
+      Alert.alert('Sucesso', 'Conta criada! Faça login para continuar.');
     } catch (error) {
       Alert.alert('Erro ao cadastrar', error.message);
     }
@@ -116,6 +111,7 @@ export default function App() {
     try {
       await firebase.auth().signOut();
       setLogado(false);
+      setPessoas([]);
       setUsuario('');
       setSenha('');
     } catch (error) {
@@ -123,112 +119,112 @@ export default function App() {
     }
   };
 
-  // ─── SQLite ──────────────────────────────────────────────────────────────────
-
-  const carregarPessoas = async (database) => {
-    const dbRef = database || db;
-    if (!dbRef) return;
-    const resultado = await dbRef.getAllAsync(
-      'SELECT * FROM pessoas ORDER BY codigo'
-    );
-    setPessoas(resultado);
-  };
-
   const adicionarPessoa = async () => {
     if (!codigo.trim() || !nome.trim()) return;
-    if (!db) return;
+
     try {
-      await db.runAsync(
-        'INSERT INTO pessoas (codigo, nome) VALUES (?, ?);',
-        codigo,
-        nome
-      );
+      const snapshot = await db
+        .collection('pessoas')
+        .where('codigo', '==', codigo.trim())
+        .get();
+
+      if (!snapshot.empty) {
+        Alert.alert('Erro', 'Código já existe. Use um código único.');
+        return;
+      }
+
+      await db.collection('pessoas').add({
+        codigo: codigo.trim(),
+        nome: nome.trim(),
+      });
+
       setCodigo('');
       setNome('');
-      await carregarPessoas();
       Alert.alert('Sucesso', 'Pessoa cadastrada.');
     } catch (error) {
-      if (error.message?.includes('UNIQUE constraint failed')) {
-        Alert.alert('Erro', 'Código já existe. Use um código único.');
-      } else {
-        console.error(error);
-      }
+      console.error(error);
+      Alert.alert('Erro', 'Não foi possível cadastrar.');
     }
   };
 
-  const excluirPessoa = async () => {
-    if (!codigo.trim() || !db) return;
+  const consultarPessoa = async () => {
+    if (!codigo.trim()) return;
+
     try {
-      const resultado = await db.getFirstAsync(
-        'SELECT 1 FROM pessoas WHERE codigo = ?;',
-        codigo
-      );
-      if (!resultado) {
+      const snapshot = await db
+        .collection('pessoas')
+        .where('codigo', '==', codigo.trim())
+        .get();
+
+      if (snapshot.empty) {
+        setNome('');
         Alert.alert('Aviso', 'Nenhuma pessoa encontrada com esse código.');
-        return;
+      } else {
+        const dados = snapshot.docs[0].data();
+        setNome(dados.nome);
       }
-      Alert.alert('Confirmação', 'Deseja realmente excluir esta pessoa?', [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Excluir',
-          style: 'destructive',
-          onPress: async () => {
-            await db.runAsync(
-              'DELETE FROM pessoas WHERE codigo = ?;',
-              codigo
-            );
-            setCodigo('');
-            setNome('');
-            await carregarPessoas();
-            Alert.alert('Sucesso', 'Pessoa excluída.');
-          },
-        },
-      ]);
     } catch (error) {
       console.error(error);
     }
   };
 
   const atualizarPessoa = async () => {
-    if (!codigo.trim() || !nome.trim() || !db) return;
+    if (!codigo.trim() || !nome.trim()) return;
+
     try {
-      const resultado = await db.getFirstAsync(
-        'SELECT 1 FROM pessoas WHERE codigo = ?;',
-        codigo
-      );
-      if (!resultado) {
+      const snapshot = await db
+        .collection('pessoas')
+        .where('codigo', '==', codigo.trim())
+        .get();
+
+      if (snapshot.empty) {
         Alert.alert('Aviso', 'Nenhuma pessoa encontrada com esse código.');
         return;
       }
-      await db.runAsync(
-        'UPDATE pessoas SET nome = ? WHERE codigo = ?;',
-        nome,
-        codigo
-      );
+
+      const docId = snapshot.docs[0].id;
+      await db.collection('pessoas').doc(docId).update({ nome: nome.trim() });
+
       setCodigo('');
       setNome('');
-      await carregarPessoas();
       Alert.alert('Sucesso', 'Pessoa atualizada.');
     } catch (error) {
       console.error(error);
+      Alert.alert('Erro', 'Não foi possível atualizar.');
     }
   };
 
-  const consultarPessoa = async () => {
-    if (!codigo.trim() || !db) return;
+  const excluirPessoa = async () => {
+    if (!codigo.trim()) return;
+
     try {
-      const pessoa = await db.getFirstAsync(
-        'SELECT nome FROM pessoas WHERE codigo = ?;',
-        codigo
-      );
-      if (pessoa) {
-        setNome(pessoa.nome);
-      } else {
-        setNome('');
+      const snapshot = await db
+        .collection('pessoas')
+        .where('codigo', '==', codigo.trim())
+        .get();
+
+      if (snapshot.empty) {
         Alert.alert('Aviso', 'Nenhuma pessoa encontrada com esse código.');
+        return;
       }
+
+      Alert.alert('Confirmação', 'Deseja realmente excluir esta pessoa?', [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Excluir',
+          style: 'destructive',
+          onPress: async () => {
+            const docId = snapshot.docs[0].id;
+            await db.collection('pessoas').doc(docId).delete();
+            setCodigo('');
+            setNome('');
+            Alert.alert('Sucesso', 'Pessoa excluída.');
+          },
+        },
+      ]);
     } catch (error) {
-      console.error('Erro na consulta:', error);
+      console.error(error);
+      Alert.alert('Erro', 'Não foi possível excluir.');
     }
   };
 
@@ -243,7 +239,7 @@ export default function App() {
     </View>
   );
 
-  // ─── Tela de Cadastro ────────────────────────────────────────────────────────
+
 
   if (tela === 'cadastro') {
     return (
@@ -287,7 +283,6 @@ export default function App() {
     );
   }
 
-  // ─── Tela de Login ───────────────────────────────────────────────────────────
 
   if (!logado) {
     return (
@@ -323,8 +318,6 @@ export default function App() {
     );
   }
 
-  // ─── Tela Principal ──────────────────────────────────────────────────────────
-
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Cadastro de Pessoas</Text>
@@ -359,7 +352,7 @@ export default function App() {
 
       <FlatList
         data={pessoas}
-        keyExtractor={(item) => item.id.toString()}
+        keyExtractor={(item) => item.id}
         renderItem={renderPessoa}
         style={styles.list}
       />
