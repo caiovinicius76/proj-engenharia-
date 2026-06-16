@@ -1,0 +1,411 @@
+import React, { useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  Button,
+  FlatList,
+  StyleSheet,
+  Alert,
+} from 'react-native';
+import * as SQLite from 'expo-sqlite';
+import firebase from 'firebase';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAYqYdEtArJNdHganZFluKG-d0-IWtKuX0",
+  authDomain: "proj-engenharia.firebaseapp.com",
+  projectId: "proj-engenharia",
+  storageBucket: "proj-engenharia.firebasestorage.app",
+  messagingSenderId: "211742662085",
+  appId: "1:211742662085:web:680c93ebb9f324a4b37fac"
+};
+
+if (!firebase.apps.length) {
+  firebase.initializeApp(firebaseConfig);
+}
+
+async function openDatabase() {
+  return await SQLite.openDatabaseAsync('pessoas.db');
+}
+
+export default function App() {
+  const [codigo, setCodigo] = useState('');
+  const [nome, setNome] = useState('');
+  const [pessoas, setPessoas] = useState([]);
+  const [db, setDb] = useState(null);
+
+  // Auth states
+  const [usuario, setUsuario] = useState('');
+  const [senha, setSenha] = useState('');
+  const [logado, setLogado] = useState(false);
+
+  // Cadastro states
+  const [tela, setTela] = useState('login'); // 'login' | 'cadastro'
+  const [emailCadastro, setEmailCadastro] = useState('');
+  const [senhaCadastro, setSenhaCadastro] = useState('');
+  const [confirmarSenha, setConfirmarSenha] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      const database = await openDatabase();
+      setDb(database);
+
+      await database.execAsync(`
+        CREATE TABLE IF NOT EXISTS pessoas (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          codigo TEXT NOT NULL UNIQUE,
+          nome TEXT NOT NULL
+        );
+      `);
+
+      await carregarPessoas(database);
+    })();
+  }, []);
+
+  // ─── Auth ────────────────────────────────────────────────────────────────────
+
+  const fazerLogin = async () => {
+    if (!usuario.trim() || !senha) {
+      Alert.alert('Atenção', 'Preencha e-mail e senha.');
+      return;
+    }
+    try {
+      await firebase.auth().signInWithEmailAndPassword(usuario.trim(), senha);
+      setLogado(true);
+      Alert.alert('Sucesso', 'Login realizado com sucesso!');
+    } catch (error) {
+      Alert.alert('Erro ao entrar', error.message);
+    }
+  };
+
+  const fazerCadastro = async () => {
+    if (!emailCadastro.trim() || !senhaCadastro || !confirmarSenha) {
+      Alert.alert('Atenção', 'Preencha todos os campos.');
+      return;
+    }
+    if (senhaCadastro !== confirmarSenha) {
+      Alert.alert('Erro', 'As senhas não coincidem.');
+      return;
+    }
+    if (senhaCadastro.length < 6) {
+      Alert.alert('Erro', 'A senha deve ter pelo menos 6 caracteres.');
+      return;
+    }
+    try {
+      await firebase.auth().createUserWithEmailAndPassword(
+        emailCadastro.trim(),
+        senhaCadastro
+      );
+      Alert.alert('Sucesso', 'Conta criada! Faça login para continuar.', [
+        {
+          text: 'OK',
+          onPress: () => {
+            setEmailCadastro('');
+            setSenhaCadastro('');
+            setConfirmarSenha('');
+            setTela('login');
+          },
+        },
+      ]);
+    } catch (error) {
+      Alert.alert('Erro ao cadastrar', error.message);
+    }
+  };
+
+  const sair = async () => {
+    try {
+      await firebase.auth().signOut();
+      setLogado(false);
+      setUsuario('');
+      setSenha('');
+    } catch (error) {
+      Alert.alert('Erro', error.message);
+    }
+  };
+
+  // ─── SQLite ──────────────────────────────────────────────────────────────────
+
+  const carregarPessoas = async (database) => {
+    const dbRef = database || db;
+    if (!dbRef) return;
+    const resultado = await dbRef.getAllAsync(
+      'SELECT * FROM pessoas ORDER BY codigo'
+    );
+    setPessoas(resultado);
+  };
+
+  const adicionarPessoa = async () => {
+    if (!codigo.trim() || !nome.trim()) return;
+    if (!db) return;
+    try {
+      await db.runAsync(
+        'INSERT INTO pessoas (codigo, nome) VALUES (?, ?);',
+        codigo,
+        nome
+      );
+      setCodigo('');
+      setNome('');
+      await carregarPessoas();
+      Alert.alert('Sucesso', 'Pessoa cadastrada.');
+    } catch (error) {
+      if (error.message?.includes('UNIQUE constraint failed')) {
+        Alert.alert('Erro', 'Código já existe. Use um código único.');
+      } else {
+        console.error(error);
+      }
+    }
+  };
+
+  const excluirPessoa = async () => {
+    if (!codigo.trim() || !db) return;
+    try {
+      const resultado = await db.getFirstAsync(
+        'SELECT 1 FROM pessoas WHERE codigo = ?;',
+        codigo
+      );
+      if (!resultado) {
+        Alert.alert('Aviso', 'Nenhuma pessoa encontrada com esse código.');
+        return;
+      }
+      Alert.alert('Confirmação', 'Deseja realmente excluir esta pessoa?', [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Excluir',
+          style: 'destructive',
+          onPress: async () => {
+            await db.runAsync(
+              'DELETE FROM pessoas WHERE codigo = ?;',
+              codigo
+            );
+            setCodigo('');
+            setNome('');
+            await carregarPessoas();
+            Alert.alert('Sucesso', 'Pessoa excluída.');
+          },
+        },
+      ]);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const atualizarPessoa = async () => {
+    if (!codigo.trim() || !nome.trim() || !db) return;
+    try {
+      const resultado = await db.getFirstAsync(
+        'SELECT 1 FROM pessoas WHERE codigo = ?;',
+        codigo
+      );
+      if (!resultado) {
+        Alert.alert('Aviso', 'Nenhuma pessoa encontrada com esse código.');
+        return;
+      }
+      await db.runAsync(
+        'UPDATE pessoas SET nome = ? WHERE codigo = ?;',
+        nome,
+        codigo
+      );
+      setCodigo('');
+      setNome('');
+      await carregarPessoas();
+      Alert.alert('Sucesso', 'Pessoa atualizada.');
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const consultarPessoa = async () => {
+    if (!codigo.trim() || !db) return;
+    try {
+      const pessoa = await db.getFirstAsync(
+        'SELECT nome FROM pessoas WHERE codigo = ?;',
+        codigo
+      );
+      if (pessoa) {
+        setNome(pessoa.nome);
+      } else {
+        setNome('');
+        Alert.alert('Aviso', 'Nenhuma pessoa encontrada com esse código.');
+      }
+    } catch (error) {
+      console.error('Erro na consulta:', error);
+    }
+  };
+
+  const renderPessoa = ({ item }) => (
+    <View style={styles.item}>
+      <Text>
+        <Text style={styles.bold}>Código:</Text> {item.codigo}
+      </Text>
+      <Text>
+        <Text style={styles.bold}>Nome:</Text> {item.nome}
+      </Text>
+    </View>
+  );
+
+  // ─── Tela de Cadastro ────────────────────────────────────────────────────────
+
+  if (tela === 'cadastro') {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>Criar Conta</Text>
+
+        <TextInput
+          style={styles.input}
+          placeholder="E-mail"
+          value={emailCadastro}
+          onChangeText={setEmailCadastro}
+          keyboardType="email-address"
+          autoCapitalize="none"
+        />
+
+        <TextInput
+          style={styles.input}
+          placeholder="Senha (mínimo 6 caracteres)"
+          secureTextEntry
+          value={senhaCadastro}
+          onChangeText={setSenhaCadastro}
+        />
+
+        <TextInput
+          style={styles.input}
+          placeholder="Confirmar senha"
+          secureTextEntry
+          value={confirmarSenha}
+          onChangeText={setConfirmarSenha}
+        />
+
+        <View style={styles.buttonRow}>
+          <Button title="Cadastrar" onPress={fazerCadastro} color="#4CAF50" />
+          <Button
+            title="Voltar"
+            onPress={() => setTela('login')}
+            color="#9E9E9E"
+          />
+        </View>
+      </View>
+    );
+  }
+
+  // ─── Tela de Login ───────────────────────────────────────────────────────────
+
+  if (!logado) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>Login</Text>
+
+        <TextInput
+          style={styles.input}
+          placeholder="E-mail"
+          value={usuario}
+          onChangeText={setUsuario}
+          keyboardType="email-address"
+          autoCapitalize="none"
+        />
+
+        <TextInput
+          style={styles.input}
+          placeholder="Senha"
+          secureTextEntry
+          value={senha}
+          onChangeText={setSenha}
+        />
+
+        <View style={styles.buttonRow}>
+          <Button title="Entrar" onPress={fazerLogin} color="#2196F3" />
+          <Button
+            title="Criar conta"
+            onPress={() => setTela('cadastro')}
+            color="#4CAF50"
+          />
+        </View>
+      </View>
+    );
+  }
+
+  // ─── Tela Principal ──────────────────────────────────────────────────────────
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Cadastro de Pessoas</Text>
+
+      <View style={{ marginBottom: 15 }}>
+        <Button title="Sair" color="#FF5722" onPress={sair} />
+      </View>
+
+      <TextInput
+        style={styles.input}
+        placeholder="Código (único)"
+        value={codigo}
+        onChangeText={setCodigo}
+      />
+
+      <TextInput
+        style={styles.input}
+        placeholder="Nome"
+        value={nome}
+        onChangeText={setNome}
+      />
+
+      <View style={styles.buttonRow}>
+        <Button title="Adicionar" onPress={adicionarPessoa} color="#4CAF50" />
+        <Button title="Atualizar" onPress={atualizarPessoa} color="#2196F3" />
+        <Button title="Excluir" onPress={excluirPessoa} color="#F44336" />
+      </View>
+
+      <View style={styles.consultButtonContainer}>
+        <Button title="Consultar" onPress={consultarPessoa} color="#9C27B0" />
+      </View>
+
+      <FlatList
+        data={pessoas}
+        keyExtractor={(item) => item.id.toString()}
+        renderItem={renderPessoa}
+        style={styles.list}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    padding: 20,
+    backgroundColor: '#f5f5f5',
+    justifyContent: 'center',
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#ccc',
+    padding: 10,
+    marginBottom: 10,
+    borderRadius: 5,
+    backgroundColor: '#fff',
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  consultButtonContainer: {
+    marginBottom: 20,
+  },
+  list: {
+    marginTop: 10,
+  },
+  item: {
+    padding: 12,
+    backgroundColor: '#fff',
+    marginBottom: 8,
+    borderRadius: 5,
+  },
+  bold: {
+    fontWeight: 'bold',
+  },
+});
