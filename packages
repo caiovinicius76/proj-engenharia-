@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "firebase": "8.10.0",
+    "expo-sqlite": "~15.2.14",
+    "@expo/vector-icons": "^15.0.3",
+    "firebase/firestore": "*"
+  }
+}
