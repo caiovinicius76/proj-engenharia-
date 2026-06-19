@@ -7,6 +7,7 @@ import {
   FlatList,
   StyleSheet,
   Alert,
+  ScrollView,
 } from 'react-native';
 import firebase from 'firebase';
 
@@ -26,39 +27,38 @@ if (!firebase.apps.length) {
 const db = firebase.firestore();
 
 export default function App() {
-  const [codigo, setCodigo] = useState('');
-  const [nome, setNome] = useState('');
-  const [pessoas, setPessoas] = useState([]);
-
-  
   const [usuario, setUsuario] = useState('');
   const [senha, setSenha] = useState('');
   const [logado, setLogado] = useState(false);
-
- 
   const [tela, setTela] = useState('login');
+
   const [emailCadastro, setEmailCadastro] = useState('');
   const [senhaCadastro, setSenhaCadastro] = useState('');
   const [confirmarSenha, setConfirmarSenha] = useState('');
+
+  const [tipoProduto, setTipoProduto] = useState('');
+  const [quantidade, setQuantidade] = useState('');
+  const [observacao, setObservacao] = useState('');
+  const [solicitacaoEditandoId, setSolicitacaoEditandoId] = useState(null);
+  const [solicitacoes, setSolicitacoes] = useState([]);
 
   useEffect(() => {
     if (!logado) return;
 
     const unsubscribe = db
-      .collection('pessoas')
-      .orderBy('codigo')
+      .collection('solicitacoes_compra')
+      .orderBy('data', 'desc')
       .onSnapshot((snapshot) => {
         const lista = snapshot.docs.map((doc) => ({
           id: doc.id,
           ...doc.data(),
         }));
-        setPessoas(lista);
+        setSolicitacoes(lista);
       });
 
     return () => unsubscribe();
   }, [logado]);
 
-  
   const fazerLogin = async () => {
     if (!usuario.trim() || !senha) {
       Alert.alert('Atenção', 'Preencha e-mail e senha.');
@@ -67,7 +67,6 @@ export default function App() {
     try {
       await firebase.auth().signInWithEmailAndPassword(usuario.trim(), senha);
       setLogado(true);
-      Alert.alert('Sucesso', 'Login realizado com sucesso!');
     } catch (error) {
       Alert.alert('Erro ao entrar', error.message);
     }
@@ -91,15 +90,11 @@ export default function App() {
         emailCadastro.trim(),
         senhaCadastro
       );
-
-    
       await firebase.auth().signOut();
-
       setEmailCadastro('');
       setSenhaCadastro('');
       setConfirmarSenha('');
       setTela('login');
-
       Alert.alert('Sucesso', 'Conta criada! Faça login para continuar.');
     } catch (error) {
       Alert.alert('Erro ao cadastrar', error.message);
@@ -110,135 +105,116 @@ export default function App() {
     try {
       await firebase.auth().signOut();
       setLogado(false);
-      setPessoas([]);
+      setSolicitacoes([]);
       setUsuario('');
       setSenha('');
+      limparFormulario();
     } catch (error) {
       Alert.alert('Erro', error.message);
     }
   };
 
-  const adicionarPessoa = async () => {
-    if (!codigo.trim() || !nome.trim()) return;
+  const limparFormulario = () => {
+    setTipoProduto('');
+    setQuantidade('');
+    setObservacao('');
+    setSolicitacaoEditandoId(null);
+  };
 
+  const adicionarSolicitacao = async () => {
+    if (!tipoProduto.trim() || !quantidade.trim()) {
+      Alert.alert('Atenção', 'Preencha o produto e a quantidade.');
+      return;
+    }
+    if (isNaN(quantidade) || Number(quantidade) <= 0) {
+      Alert.alert('Erro', 'A quantidade deve ser um número maior que zero.');
+      return;
+    }
     try {
-      const snapshot = await db
-        .collection('pessoas')
-        .where('codigo', '==', codigo.trim())
-        .get();
-
-      if (!snapshot.empty) {
-        Alert.alert('Erro', 'Código já existe. Use um código único.');
-        return;
-      }
-
-      await db.collection('pessoas').add({
-        codigo: codigo.trim(),
-        nome: nome.trim(),
+      const hoje = new Date().toISOString().slice(0, 10);
+      const userEmail = firebase.auth().currentUser?.email || '';
+      await db.collection('solicitacoes_compra').add({
+        tipoProduto: tipoProduto.trim(),
+        quantidade: Number(quantidade),
+        observacao: observacao.trim(),
+        status: 'Pendente',
+        data: hoje,
+        solicitanteEmail: userEmail,
       });
-
-      setCodigo('');
-      setNome('');
-      Alert.alert('Sucesso', 'Pessoa cadastrada.');
+      limparFormulario();
+      Alert.alert('Sucesso', 'Solicitação enviada.');
     } catch (error) {
       console.error(error);
-      Alert.alert('Erro', 'Não foi possível cadastrar.');
+      Alert.alert('Erro', 'Não foi possível enviar a solicitação.');
     }
   };
 
-  const consultarPessoa = async () => {
-    if (!codigo.trim()) return;
-
-    try {
-      const snapshot = await db
-        .collection('pessoas')
-        .where('codigo', '==', codigo.trim())
-        .get();
-
-      if (snapshot.empty) {
-        setNome('');
-        Alert.alert('Aviso', 'Nenhuma pessoa encontrada com esse código.');
-      } else {
-        const dados = snapshot.docs[0].data();
-        setNome(dados.nome);
-      }
-    } catch (error) {
-      console.error(error);
-    }
+  const consultarSolicitacao = (item) => {
+    setTipoProduto(item.tipoProduto);
+    setQuantidade(String(item.quantidade));
+    setObservacao(item.observacao || '');
+    setSolicitacaoEditandoId(item.id);
   };
 
-  const atualizarPessoa = async () => {
-    if (!codigo.trim() || !nome.trim()) return;
-
+  const atualizarSolicitacao = async () => {
+    if (!solicitacaoEditandoId) return;
+    if (!tipoProduto.trim() || !quantidade.trim()) {
+      Alert.alert('Atenção', 'Preencha o produto e a quantidade.');
+      return;
+    }
+    if (isNaN(quantidade) || Number(quantidade) <= 0) {
+      Alert.alert('Erro', 'A quantidade deve ser um número maior que zero.');
+      return;
+    }
     try {
-      const snapshot = await db
-        .collection('pessoas')
-        .where('codigo', '==', codigo.trim())
-        .get();
-
-      if (snapshot.empty) {
-        Alert.alert('Aviso', 'Nenhuma pessoa encontrada com esse código.');
-        return;
-      }
-
-      const docId = snapshot.docs[0].id;
-      await db.collection('pessoas').doc(docId).update({ nome: nome.trim() });
-
-      setCodigo('');
-      setNome('');
-      Alert.alert('Sucesso', 'Pessoa atualizada.');
+      await db.collection('solicitacoes_compra').doc(solicitacaoEditandoId).update({
+        tipoProduto: tipoProduto.trim(),
+        quantidade: Number(quantidade),
+        observacao: observacao.trim(),
+      });
+      limparFormulario();
+      Alert.alert('Sucesso', 'Solicitação atualizada.');
     } catch (error) {
       console.error(error);
       Alert.alert('Erro', 'Não foi possível atualizar.');
     }
   };
 
-  const excluirPessoa = async () => {
-    if (!codigo.trim()) return;
-
-    try {
-      const snapshot = await db
-        .collection('pessoas')
-        .where('codigo', '==', codigo.trim())
-        .get();
-
-      if (snapshot.empty) {
-        Alert.alert('Aviso', 'Nenhuma pessoa encontrada com esse código.');
-        return;
-      }
-
-      Alert.alert('Confirmação', 'Deseja realmente excluir esta pessoa?', [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Excluir',
-          style: 'destructive',
-          onPress: async () => {
-            const docId = snapshot.docs[0].id;
-            await db.collection('pessoas').doc(docId).delete();
-            setCodigo('');
-            setNome('');
-            Alert.alert('Sucesso', 'Pessoa excluída.');
-          },
+  const excluirSolicitacao = async (id) => {
+    Alert.alert('Confirmação', 'Deseja realmente excluir esta solicitação?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Excluir',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await db.collection('solicitacoes_compra').doc(id).delete();
+            if (solicitacaoEditandoId === id) limparFormulario();
+            Alert.alert('Sucesso', 'Solicitação excluída.');
+          } catch (error) {
+            console.error(error);
+            Alert.alert('Erro', 'Não foi possível excluir.');
+          }
         },
-      ]);
-    } catch (error) {
-      console.error(error);
-      Alert.alert('Erro', 'Não foi possível excluir.');
-    }
+      },
+    ]);
   };
 
-  const renderPessoa = ({ item }) => (
+  const renderSolicitacao = ({ item }) => (
     <View style={styles.item}>
-      <Text>
-        <Text style={styles.bold}>Código:</Text> {item.codigo}
-      </Text>
-      <Text>
-        <Text style={styles.bold}>Nome:</Text> {item.nome}
-      </Text>
+      <Text><Text style={styles.bold}>Produto:</Text> {item.tipoProduto}</Text>
+      <Text><Text style={styles.bold}>Quantidade:</Text> {item.quantidade}</Text>
+      <Text><Text style={styles.bold}>Status:</Text> {item.status}</Text>
+      <Text><Text style={styles.bold}>Data:</Text> {item.data}</Text>
+      {item.observacao ? (
+        <Text><Text style={styles.bold}>Obs:</Text> {item.observacao}</Text>
+      ) : null}
+      <View style={styles.itemButtons}>
+        <Button title="Editar" onPress={() => consultarSolicitacao(item)} color="#2196F3" />
+        <Button title="Excluir" onPress={() => excluirSolicitacao(item.id)} color="#F44336" />
+      </View>
     </View>
   );
-
-
 
   if (tela === 'cadastro') {
     return (
@@ -253,7 +229,6 @@ export default function App() {
           keyboardType="email-address"
           autoCapitalize="none"
         />
-
         <TextInput
           style={styles.input}
           placeholder="Senha (mínimo 6 caracteres)"
@@ -261,7 +236,6 @@ export default function App() {
           value={senhaCadastro}
           onChangeText={setSenhaCadastro}
         />
-
         <TextInput
           style={styles.input}
           placeholder="Confirmar senha"
@@ -272,16 +246,11 @@ export default function App() {
 
         <View style={styles.buttonRow}>
           <Button title="Cadastrar" onPress={fazerCadastro} color="#4CAF50" />
-          <Button
-            title="Voltar"
-            onPress={() => setTela('login')}
-            color="#9E9E9E"
-          />
+          <Button title="Voltar" onPress={() => setTela('login')} color="#9E9E9E" />
         </View>
       </View>
     );
   }
-
 
   if (!logado) {
     return (
@@ -296,7 +265,6 @@ export default function App() {
           keyboardType="email-address"
           autoCapitalize="none"
         />
-
         <TextInput
           style={styles.input}
           placeholder="Senha"
@@ -307,19 +275,15 @@ export default function App() {
 
         <View style={styles.buttonRow}>
           <Button title="Entrar" onPress={fazerLogin} color="#2196F3" />
-          <Button
-            title="Criar conta"
-            onPress={() => setTela('cadastro')}
-            color="#4CAF50"
-          />
+          <Button title="Criar conta" onPress={() => setTela('cadastro')} color="#4CAF50" />
         </View>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Cadastro de Pessoas</Text>
+    <ScrollView contentContainerStyle={styles.container}>
+      <Text style={styles.title}>Solicitação de Compra</Text>
 
       <View style={{ marginBottom: 15 }}>
         <Button title="Sair" color="#FF5722" onPress={sair} />
@@ -327,41 +291,53 @@ export default function App() {
 
       <TextInput
         style={styles.input}
-        placeholder="Código (único)"
-        value={codigo}
-        onChangeText={setCodigo}
+        placeholder="Nome / Descrição do Produto"
+        value={tipoProduto}
+        onChangeText={setTipoProduto}
       />
-
       <TextInput
         style={styles.input}
-        placeholder="Nome"
-        value={nome}
-        onChangeText={setNome}
+        placeholder="Quantidade"
+        value={quantidade}
+        onChangeText={setQuantidade}
+        keyboardType="numeric"
+      />
+      <TextInput
+        style={[styles.input, styles.textarea]}
+        placeholder="Observações / Justificativa (opcional)"
+        value={observacao}
+        onChangeText={setObservacao}
+        multiline
+        numberOfLines={4}
       />
 
       <View style={styles.buttonRow}>
-        <Button title="Adicionar" onPress={adicionarPessoa} color="#4CAF50" />
-        <Button title="Atualizar" onPress={atualizarPessoa} color="#2196F3" />
-        <Button title="Excluir" onPress={excluirPessoa} color="#F44336" />
+        {solicitacaoEditandoId ? (
+          <>
+            <Button title="Atualizar" onPress={atualizarSolicitacao} color="#2196F3" />
+            <Button title="Cancelar" onPress={limparFormulario} color="#9E9E9E" />
+          </>
+        ) : (
+          <Button title="Enviar Solicitação" onPress={adicionarSolicitacao} color="#4CAF50" />
+        )}
       </View>
 
-      <View style={styles.consultButtonContainer}>
-        <Button title="Consultar" onPress={consultarPessoa} color="#9C27B0" />
-      </View>
+      <Text style={styles.sectionTitle}>Minhas Solicitações</Text>
 
       <FlatList
-        data={pessoas}
+        data={solicitacoes}
         keyExtractor={(item) => item.id}
-        renderItem={renderPessoa}
+        renderItem={renderSolicitacao}
         style={styles.list}
+        scrollEnabled={false}
       />
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    flexGrow: 1,
     padding: 20,
     backgroundColor: '#f5f5f5',
     justifyContent: 'center',
@@ -372,6 +348,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 20,
   },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginTop: 20,
+    marginBottom: 10,
+  },
   input: {
     borderWidth: 1,
     borderColor: '#ccc',
@@ -380,13 +362,15 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     backgroundColor: '#fff',
   },
+  textarea: {
+    height: 80,
+    textAlignVertical: 'top',
+  },
   buttonRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 10,
-  },
-  consultButtonContainer: {
-    marginBottom: 20,
+    gap: 10,
   },
   list: {
     marginTop: 10,
@@ -396,6 +380,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     marginBottom: 8,
     borderRadius: 5,
+  },
+  itemButtons: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 8,
   },
   bold: {
     fontWeight: 'bold',
